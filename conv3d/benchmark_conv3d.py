@@ -5,7 +5,7 @@ Triton Conv3D 性能基准测试脚本
 功能：
 - 批量测试不同的 shape 配置
 - 对比 fixed config vs autotune 性能
-- 生成详细的性能报告（JSON/CSV/Markdown）
+- 可选：生成详细的性能报告（JSON/CSV/Markdown）
 
 使用方法：
 1. 基本测试（使用真实场景数据，默认 Fixed Config）：
@@ -14,8 +14,11 @@ Triton Conv3D 性能基准测试脚本
 2. 启用 Autotune 测试（会测试 Fixed + Autotune 两种模式，并显示 tune 过程）：
    python benchmark_conv3d.py --autotune
 
-3. 指定输出目录：
-   python benchmark_conv3d.py --output-dir ./results
+3. 保存测试结果到文件：
+   python benchmark_conv3d.py --save-results
+
+4. 指定输出目录和保存结果：
+   python benchmark_conv3d.py --save-results --output-dir ./results
 """
 
 import os
@@ -70,7 +73,6 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
         # Case 1: 最高频场景 - 378次调用, 平均1.56ms
         # 中等通道, 小空间, 小depth
         {
-            'name': 'real_high_freq_1',
             'batch_size': 1,
             'in_channels': 384,
             'out_channels': 384,
@@ -87,7 +89,6 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
         # Case 2: 第二高频 - 200次调用, 平均3.26ms
         # 大空间尺寸 (1280x720), 中等通道
         {
-            'name': 'real_high_freq_2_large_spatial',
             'batch_size': 1,
             'in_channels': 96,
             'out_channels': 96,
@@ -104,7 +105,6 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
         # Case 3: 第三高频 - 180次调用, 平均3.44ms
         # 大通道数 (192), 大空间 (640x360)
         {
-            'name': 'real_high_freq_3_large_channel',
             'batch_size': 1,
             'in_channels': 192,
             'out_channels': 192,
@@ -121,7 +121,6 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
         # Case 4: 输入通道很小 - 20次调用, 平均16.99ms
         # 典型的第一层 Conv (3 channels -> 96)
         {
-            'name': 'real_first_layer',
             'batch_size': 1,
             'in_channels': 3,
             'out_channels': 96,
@@ -138,7 +137,6 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
         # Case 5: 1x1x1 卷积 - 通道扩张
         # Depth=1, 大空间, 1x1x1 kernel
         {
-            'name': 'real_1x1x1_channel_expand',
             'batch_size': 1,
             'in_channels': 192,
             'out_channels': 384,
@@ -155,7 +153,6 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
         # Case 6: 大 depth - 1次调用, 平均315.85ms
         # Depth=21, 小通道, 1x1x1 kernel
         {
-            'name': 'real_large_depth',
             'batch_size': 1,
             'in_channels': 32,
             'out_channels': 32,
@@ -172,7 +169,6 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
         # Case 7: Stride=2 下采样 - 20次调用, 平均18.55ms
         # 3x1x1 kernel, stride 2 in depth
         {
-            'name': 'real_stride2_downsample',
             'batch_size': 1,
             'in_channels': 192,
             'out_channels': 192,
@@ -189,7 +185,6 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
         # Case 8: 高通道 3x3x3 - 160次调用, 平均3.52ms
         # 384 channels, 中等空间
         {
-            'name': 'real_high_channel_3x3x3',
             'batch_size': 1,
             'in_channels': 384,
             'out_channels': 384,
@@ -206,7 +201,6 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
         # Case 9: 通道扩张 192->384 - 40次调用, 平均9.64ms
         # 3x3x3 kernel, 中等空间
         {
-            'name': 'real_channel_expansion',
             'batch_size': 1,
             'in_channels': 192,
             'out_channels': 384,
@@ -223,7 +217,6 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
         # Case 10: 小depth 1x1x1通道扩张 - 40次调用, 平均10.19ms
         # Depth=2, 1x1x1 kernel, 192->384
         {
-            'name': 'real_small_depth_1x1x1',
             'batch_size': 1,
             'in_channels': 192,
             'out_channels': 384,
@@ -240,6 +233,16 @@ def get_real_world_shapes() -> List[Dict[str, Any]]:
 
 
 # ========== 测试执行 ==========
+
+def generate_config_name(config: Dict[str, Any]) -> str:
+    """根据配置动态生成名称"""
+    return (f"N{config['batch_size']}_"
+            f"C{config['in_channels']}->{config['out_channels']}_"
+            f"DHW{config['depth']}x{config['height']}x{config['width']}_"
+            f"K{config['kernel_size'][0]}x{config['kernel_size'][1]}x{config['kernel_size'][2]}_"
+            f"S{config['stride'][0]}x{config['stride'][1]}x{config['stride'][2]}_"
+            f"G{config.get('groups', 1)}")
+
 
 def create_test_tensors(config: Dict[str, Any], device: str, dtype: torch.dtype):
     """创建测试用的输入张量"""
@@ -295,8 +298,10 @@ def run_single_test(
     Returns:
         测试结果字典
     """
+    config_name = generate_config_name(config)
+    
     print(f"\n{'='*80}")
-    print(f"Testing: {config['name']}")
+    print(f"Testing: {config_name}")
     print(f"  Shape: N={config['batch_size']}, C={config['in_channels']}->{config['out_channels']}, "
           f"THW={config['depth']}x{config['height']}x{config['width']}")
     print(f"  Kernel: {config['kernel_size']}, Stride: {config['stride']}, "
@@ -308,12 +313,12 @@ def run_single_test(
     input_tensor, weight, bias = create_test_tensors(config, device, dtype)
     
     stride = config.get('stride', (1, 1, 1))
-    padding = config.get('padding', (1, 1, 1))
+    padding = config.get('padding', (0, 0, 0))
     dilation = config.get('dilation', (1, 1, 1))
     groups = config.get('groups', 1)
     
     result = {
-        'config_name': config['name'],
+        'config_name': config_name,
         'config': config,
         'device': device,
         'dtype': str(dtype),
@@ -340,20 +345,11 @@ def run_single_test(
         use_autotune=use_autotune
     )
     
-    # do_bench 返回的是毫秒，设置统计值
-    triton_min = triton_mean  # do_bench 只返回平均值
-    triton_max = triton_mean
-    triton_std = 0.0
-    
     result['triton'] = {
         'mean_ms': round(triton_mean, 3),
-        'min_ms': round(triton_min, 3),
-        'max_ms': round(triton_max, 3),
-        'std_ms': round(triton_std, 3),
-        'all_times_ms': [],  # do_bench 不返回单次时间
     }
     
-    print(f"✓ Triton: {triton_mean:.3f}±{triton_std:.3f} ms (min={triton_min:.3f}, max={triton_max:.3f})")
+    print(f"✓ Triton: {triton_mean:.3f} ms")
     
     # ========== PyTorch 基准测试 ==========
     if test_torch_baseline:
@@ -372,55 +368,32 @@ def run_single_test(
             stride=stride, padding=padding, dilation=dilation, groups=groups
         )
         
-        # do_bench 返回的是毫秒，设置统计值
-        torch_min = torch_mean  # do_bench 只返回平均值
-        torch_max = torch_mean
-        torch_std = 0.0
-        
         result['pytorch'] = {
             'mean_ms': round(torch_mean, 3),
-            'min_ms': round(torch_min, 3),
-            'max_ms': round(torch_max, 3),
-            'std_ms': round(torch_std, 3),
-            'all_times_ms': [],  # do_bench 不返回单次时间
         }
         
-        print(f"✓ PyTorch: {torch_mean:.3f}±{torch_std:.3f} ms (min={torch_min:.3f}, max={torch_max:.3f})")
+        print(f"✓ PyTorch: {torch_mean:.3f} ms")
         
         # 计算加速比
         speedup = triton_mean / torch_mean
         result['speedup'] = round(speedup, 2)
-        print(f"📊 Speedup: {speedup:.2f}x {'🚀' if speedup < 1 else '⚠️'}")
+        print(f"📊 Speedup (T/P): {speedup:.2f}x {'🚀 Triton faster' if speedup < 1 else '⚠️ PyTorch faster'}")
         
-        # 验证正确性
+        # 验证正确性 - 使用 torch.allclose
+        # rtol: 相对容差, atol: 绝对容差
+        # 公式: |output_triton - output_torch| <= atol + rtol * |output_torch|
+        outputs_match = torch.allclose(output_triton, output_torch, rtol=1e-5, atol=1e-5)
+        
+        # 计算差异统计信息（用于调试）
         max_diff = torch.abs(output_triton - output_torch).max().item()
         mean_diff = torch.abs(output_triton - output_torch).mean().item()
         
-        # 动态阈值：根据输出规模调整
-        # 大规模计算允许更大的绝对误差
-        output_size = output_triton.numel()
-        if output_size > 10_000_000:  # > 10M 元素
-            threshold = 0.01  # 1%
-        elif output_size > 1_000_000:  # > 1M 元素
-            threshold = 0.005  # 0.5%
-        else:
-            threshold = 0.003  # 0.3%
-        
         result['max_difference'] = max_diff
         result['mean_difference'] = mean_diff
-        result['outputs_match'] = max_diff < threshold
+        result['outputs_match'] = outputs_match
         
-        # 状态判断
-        if max_diff < 0.001:
-            status = "✅ EXCELLENT"
-        elif max_diff < threshold:
-            status = "✅ PASS"
-        elif max_diff < threshold * 2:
-            status = "⚠️ ACCEPTABLE"
-        else:
-            status = "❌ FAIL"
-        
-        print(f"✓ Correctness: max_diff={max_diff:.6f}, mean_diff={mean_diff:.6f} {status}")
+        status = "✅ PASS" if outputs_match else "❌ FAIL"
+        print(f"✓ Correctness: {status} (max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e})")
     
     # 计算额外指标
     output_elements = output_triton.numel()
@@ -486,9 +459,11 @@ def run_benchmark_suite(
     print(f"{'='*80}\n")
     
     for config in configs:
+        config_name = generate_config_name(config)
+        
         # 测试 fixed config 模式
         current_test += 1
-        print(f"\n[{current_test}/{total_tests}] Testing {config['name']} (Fixed Config)")
+        print(f"\n[{current_test}/{total_tests}] Testing {config_name} (Fixed Config)")
         
         try:
             result_fixed = run_single_test(
@@ -507,7 +482,7 @@ def run_benchmark_suite(
         # 测试 autotune 模式
         if test_both_modes:
             current_test += 1
-            print(f"\n[{current_test}/{total_tests}] Testing {config['name']} (Autotune)")
+            print(f"\n[{current_test}/{total_tests}] Testing {config_name} (Autotune)")
             
             try:
                 result_autotune = run_single_test(
@@ -561,9 +536,6 @@ def export_results_csv(results: List[Dict[str, Any]], filepath: str):
             'padding': str(r['config']['padding']),
             'groups': r['config'].get('groups', 1),
             'triton_mean_ms': r['triton']['mean_ms'],
-            'triton_std_ms': r['triton']['std_ms'],
-            'triton_min_ms': r['triton']['min_ms'],
-            'triton_max_ms': r['triton']['max_ms'],
             'output_elements': r['output_elements'],
             'throughput_gelements_per_sec': r['throughput_gelements_per_sec'],
             'gflops': r['gflops'],
@@ -572,7 +544,6 @@ def export_results_csv(results: List[Dict[str, Any]], filepath: str):
         
         if 'pytorch' in r:
             flat['pytorch_mean_ms'] = r['pytorch']['mean_ms']
-            flat['pytorch_std_ms'] = r['pytorch']['std_ms']
             flat['speedup'] = r.get('speedup', None)
             flat['max_difference'] = r.get('max_difference', None)
             flat['outputs_match'] = r.get('outputs_match', None)
@@ -618,8 +589,8 @@ def export_results_markdown(results: List[Dict[str, Any]], filepath: str):
         shape = (f"N{r['config']['batch_size']}_"
                 f"C{r['config']['in_channels']}->{r['config']['out_channels']}_"
                 f"THW{r['config']['depth']}x{r['config']['height']}x{r['config']['width']}")
-        triton_time = f"{r['triton']['mean_ms']:.3f}±{r['triton']['std_ms']:.3f}"
-        pytorch_time = f"{r['pytorch']['mean_ms']:.3f}±{r['pytorch']['std_ms']:.3f}" if 'pytorch' in r else "N/A"
+        triton_time = f"{r['triton']['mean_ms']:.3f}"
+        pytorch_time = f"{r['pytorch']['mean_ms']:.3f}" if 'pytorch' in r else "N/A"
         speedup = f"{r.get('speedup', 'N/A'):.2f}x" if 'speedup' in r else "N/A"
         tflops = f"{r['tflops_per_sec']:.2f}"
         
@@ -636,11 +607,10 @@ def export_results_markdown(results: List[Dict[str, Any]], filepath: str):
         lines.append(f"- **Stride**: {r['config']['stride']}\n")
         lines.append(f"- **Padding**: {r['config']['padding']}\n")
         lines.append(f"- **Groups**: {r['config'].get('groups', 1)}\n")
-        lines.append(f"- **Triton Time**: {r['triton']['mean_ms']:.3f} ± {r['triton']['std_ms']:.3f} ms "
-                    f"(min={r['triton']['min_ms']:.3f}, max={r['triton']['max_ms']:.3f})\n")
+        lines.append(f"- **Triton Time**: {r['triton']['mean_ms']:.3f} ms\n")
         
         if 'pytorch' in r:
-            lines.append(f"- **PyTorch Time**: {r['pytorch']['mean_ms']:.3f} ± {r['pytorch']['std_ms']:.3f} ms\n")
+            lines.append(f"- **PyTorch Time**: {r['pytorch']['mean_ms']:.3f} ms\n")
             lines.append(f"- **Speedup**: {r.get('speedup', 'N/A'):.2f}x\n")
             lines.append(f"- **Correctness**: {'✅ PASS' if r.get('outputs_match') else '❌ FAIL'} "
                         f"(max_diff={r.get('max_difference', 0):.6f})\n")
@@ -712,6 +682,12 @@ def main():
         help='Output directory for results (default: ../benchmark_results)'
     )
     
+    parser.add_argument(
+        '--save-results',
+        action='store_true',
+        help='Save results to JSON/CSV/Markdown files (default: False)'
+    )
+    
     args = parser.parse_args()
     
     # 如果启用 autotune，自动显示 tune 过程
@@ -752,12 +728,11 @@ def main():
     print(f"Configurations: {len(configs)}")
     print(f"Test modes: {'Fixed + Autotune (with tuning process)' if args.autotune else 'Fixed only'}")
     print(f"PyTorch baseline: {'No' if args.no_torch_baseline else 'Yes'}")
+    print(f"Save results: {'Yes' if args.save_results else 'No'}")
     print(f"Warmup/Repeat runs: {args.warmup_runs}/{args.repeat_runs}")
     print(f"{'='*80}\n")
     
     # 运行测试
-    start_time = time.time()
-    
     results = run_benchmark_suite(
         configs,
         device=args.device,
@@ -768,35 +743,37 @@ def main():
         repeat_runs=args.repeat_runs,
     )
     
-    total_time = time.time() - start_time
-    
-    # 创建输出目录
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 生成时间戳
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    # 导出结果
-    print(f"\n{'='*80}")
-    print(f"📊 Exporting Results")
-    print(f"{'='*80}")
-    
-    json_path = output_dir / f"benchmark_real_world_{timestamp}.json"
-    csv_path = output_dir / f"benchmark_real_world_{timestamp}.csv"
-    md_path = output_dir / f"benchmark_real_world_{timestamp}.md"
-    
-    export_results_json(results, str(json_path))
-    export_results_csv(results, str(csv_path))
-    export_results_markdown(results, str(md_path))
+    # 导出结果（仅在指定 --save-results 时）
+    if args.save_results:
+        # 创建输出目录
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 生成时间戳
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # 导出结果
+        print(f"\n{'='*80}")
+        print(f"📊 Exporting Results")
+        print(f"{'='*80}")
+        
+        json_path = output_dir / f"benchmark_real_world_{timestamp}.json"
+        csv_path = output_dir / f"benchmark_real_world_{timestamp}.csv"
+        md_path = output_dir / f"benchmark_real_world_{timestamp}.md"
+        
+        export_results_json(results, str(json_path))
+        export_results_csv(results, str(csv_path))
+        export_results_markdown(results, str(md_path))
     
     # 打印总结
     print(f"\n{'='*80}")
     print(f"✅ Benchmark Complete!")
     print(f"{'='*80}")
-    print(f"Total time: {total_time:.2f} seconds")
     print(f"Tests completed: {len(results)}")
-    print(f"Results saved to: {output_dir}")
+    if args.save_results:
+        print(f"Results saved to: {output_dir}")
+    else:
+        print(f"Results not saved (use --save-results to save)")
     print(f"{'='*80}\n")
     
     return 0
