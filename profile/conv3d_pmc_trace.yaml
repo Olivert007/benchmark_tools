@@ -1,0 +1,211 @@
+jobs:
+  # GPU MODE: STABLE_STD
+  # Conv3D Triton Kernel PMC Tracing Configuration
+  
+  # Pass 0: Basic metrics
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_basic
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # The total kilobytes fetched from the video memory.
+        - FETCH_SIZE         
+        # The percentage of GPUTime the memory unit is active.
+        - MemUnitBusy
+        # The percentage of time GPU was busy.
+        - GPUBusy
+        # Percentage of the time that GPU is active
+        - GPU_UTIL
+        # Number of wave-cycles spent waiting for anything (per-simd, nondeterministic).
+        - SQ_WAIT_ANY
+        # Number of wave-cycles spent waiting for any instruction issue.
+        - SQ_WAIT_INST_ANY
+        # The average number of vector ALU instructions executed per work-item.
+        - VALUInsts
+        # The average number of scalar ALU instructions executed per work-item.
+        - SALUInsts
+
+  # Pass 1: Instruction counts
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_insts
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # The number of VALU (Vector ALU) instructions issued.
+        - SQ_INSTS_VALU
+        # Total Number of SALU (Scalar ALU) instructions issued.
+        - SQ_INSTS_SALU
+        # Total number of SMEM (Scalar Memory Read) instructions issued.
+        - SQ_INSTS_SMEM
+        # The number of buffer load, image load, sample, or atomic instructions.
+        - SQ_INSTS_TEX_LOAD
+        # The number of buffer store, image store, or atomic instructions.
+        - SQ_INSTS_TEX_STORE
+        # The number of cycles needed to send addr and data for VMEM instructions.
+        - SQ_INST_CYCLES_VMEM
+
+  # Pass 2: GL2C read metrics
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_gl2c_read
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # Number of GL2C/EA read requests (32/64/128-byte)
+        - GL2C_MC_RDREQ
+        # Number of 32-byte GL2C/EA read requests
+        - GL2C_EA_RDREQ_32B
+        # Number of 64-byte GL2C/EA read requests
+        - GL2C_EA_RDREQ_64B
+        # Number of 128-byte GL2C/EA read requests
+        - GL2C_EA_RDREQ_128B
+
+  # Pass 3: LDS metrics
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_lds
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # Total number of LDS instructions issued (including FLAT).
+        - SQ_INSTS_LDS
+        # Number of cycles LDS is stalled by bank conflicts.
+        - SQC_LDS_BANK_CONFLICT
+        # Number of wave-cycles spent waiting for LDS instruction issue.
+        - SQ_WAIT_INST_LDS
+        # Number of cycles LDS is used for indexed operations.
+        - SQC_LDS_IDX_ACTIVE
+        # The percentage of GPUTime LDS is stalled by bank conflicts.
+        - LDSBankConflict
+        # The percentage of GPUTime ALU units are stalled by the LDS.
+        - ALUStalledByLDS
+        # LDS latency in cycles
+        - LdsLatency
+        # Number of in-flight LDS instructions.
+        - SQ_INST_LEVEL_LDS
+
+  # Pass 4: Wave metrics
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_waves
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # Number of wave32 instructions issued.
+        - SQ_INSTS_WAVE32
+        # Number of instructions issued by wave32 waves.
+        - SQ_WAVE32_INSTS
+        # Number of wave32 valu instructions issued.
+        - SQ_INSTS_WAVE32_VALU
+        # Percentage of time spent waiting for anything.
+        - WAVE_DEP_WAIT
+        # Percentage of time spent waiting for any instruction issue.
+        - WAVE_ISSUE_WAIT
+        # The cycles spent executing waves in the CUs.
+        - SQ_WAVE_CYCLES
+
+  # Pass 5: TA load metrics
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_ta_load
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # Number of buffer load vec32 packets processed by TA
+        - TA_BUFFER_LOAD_WAVEFRONTS
+        # Number of buffer load vec32 packets (sum over TA instances)
+        - TA_BUFFER_LOAD_WAVEFRONTS_sum
+        # TA block is busy (average over TA instances)
+        - TA_BUSY_avr
+
+  # Pass 6: Write metrics
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_write
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # The total kilobytes written to the video memory.
+        - WRITE_SIZE
+        # The percentage of GPUTime the Write unit is stalled.
+        - WriteUnitStalled
+
+  # Pass 7: GL2C write metrics
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_gl2c_write
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # Number of 64-byte transactions (write or CMPSWAP)
+        - GL2C_EA_WRREQ_64B
+        # Number of write transactions (32-byte or 64-byte)
+        - GL2C_MC_WRREQ
+        # Number of cycles a write request was stalled
+        - GL2C_MC_WRREQ_STALL
+        # Number of cycles a write request was stalled (max over GL2C instances)
+        - GL2C_WRREQ_STALL_max
+
+  # Pass 8: Cache metrics
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_cache
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # The percentage of data cache hits.
+        - L2CacheHit
+        # Number of cache hits
+        - GL2C_HIT         
+        # Number of cache misses
+        - GL2C_MISS        
+
+  # Pass 9: Occupancy metrics
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_occupancy
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # GPU Occupancy as % of maximum.
+        - OccupancyPercent
+        # Mean occupancy per compute unit.
+        - MeanOccupancyPerCU
+        # Mean occupancy per active compute unit.
+        - MeanOccupancyPerActiveCU
+
+  # Pass 10: TA store metrics
+  - kernel_include_regex: "conv3d_forward_kernel_impl.*"
+    kernel_exclude_regex: ""
+    kernel_iteration_range: "[10-20]"
+    output_file: pmc_conv3d_ta_store
+    output_format: [json, csv]
+    truncate_kernels: true
+    
+    pmc:
+        # Number of buffer store vec32 packets processed by TA
+        - TA_BUFFER_STORE_WAVEFRONTS
+        # Number of buffer store vec32 packets (sum over TA instances)
+        - TA_BUFFER_STORE_WAVEFRONTS_sum

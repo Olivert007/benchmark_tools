@@ -1,0 +1,80 @@
+jobs:
+    # Conv3D Triton Kernel ATT (Advanced Thread Trace) Configuration
+    -
+        # Match conv3d_forward_kernel_* patterns
+        # Match the Triton kernel name (plus JIT suffixes)
+        # - verify_conv3d_impl.py:      conv3d_forward_kernel_impl
+        # - verify_conv3d_optimized.py: conv3d_forward_kernel_optimized
+        kernel_include_regex: "conv3d_forward_kernel_(impl|optimized).*"
+        kernel_exclude_regex: ""
+        
+        # Trace early iterations (do_bench warmup/rep are usually < 30)
+        # Keep output small but reliably capture at least one kernel launch.
+        # Note: dispatch id in folder name (e.g. dispatch_62) is NOT stable across runs.
+        # Some setups may not hit a single-point range like [10-10] depending on how
+        # iterations are counted; using a tiny early window is more robust.
+        kernel_iteration_range: "[0-1]"
+        
+        # Output format
+        output_format: [json, csv]
+        truncate_kernels: true
+        
+        # Enable Advanced Thread Trace
+        advanced_thread_trace: true
+        
+        # ATT Configuration
+        # att_target_cu: Defines the CU used to gather detail tokens (WGP on Navi)
+        att_target_cu: 1
+        
+        # att_shader_engine_mask: Defines the Shader Engines (SE) to be traced
+        # 0xff = trace all 8 SEs (Max 2^32 - 1)
+        # Most effective: trace only SE0 to reduce .att files
+        att_shader_engine_mask: "0x1"
+        
+        # att_simd_select: Defines SIMDs to be traced (out of four)
+        # Bitmask on GFX9, SIMD_ID[0,3] on Navi
+        # 3 = trace SIMD 0 and 1
+        att_simd_select: 3
+        
+        # att_buffer_size: Specifies the trace buffer size (shared for all SEs)
+        # Increase if buffer tends to get full
+        # 0x8000000 = 128MB (adjust based on your kernel complexity)
+        att_buffer_size: "0x8000000"
+        
+        # att_serialize-all: Turn on serialization for untraced kernels
+        att_serialize-all: false
+
+
+# ATT Metrics Explanation:
+# ========================
+# 
+# Hitcount: 
+#   The number of times a particular instruction is executed 
+#   (sum across all traced waves)
+#
+# Latency: 
+#   Total latency in cycles
+#   - GFX9: "Stall time + Issue time"
+#   - GFX10+: "Stall time + Execute time"
+#
+# Stall: 
+#   The total number of cycles the hardware pipe couldn't issue an instruction
+#   Usually caused by:
+#   - Hardware unit busy (TCP, LDS backpressure)
+#   - Memory access delays
+#   - Resource contention
+#
+# Idle: 
+#   The total time gap between completion of previous instruction 
+#   and beginning of current instruction
+#   Can be caused by:
+#   - Arbiter loss
+#   - Source or destination register dependency
+#   - Instruction cache miss
+#
+# Usage Tips:
+# ===========
+# 1. Start with small iteration range (e.g., [10-15]) to avoid large trace files
+# 2. Increase att_buffer_size if you see buffer overflow warnings
+# 3. Reduce att_simd_select if trace data is too large
+# 4. Use att_target_cu to focus on specific compute units
